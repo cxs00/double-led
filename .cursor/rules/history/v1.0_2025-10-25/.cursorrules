@@ -1,0 +1,362 @@
+# STM32 500双数码管变频器控制系统开发规则
+# 项目：500_double_led v1.0
+# 芯片：STM32F103C8T6
+# 更新：2025-10-25
+
+## 项目基本信息
+- 芯片型号：STM32F103C8T6 (64KB Flash, 20KB SRAM)
+- 开发工具：Keil MDK-ARM v5.25 + STM32CubeMX
+- HAL库版本：STM32Cube_FW_F1_V1.8.x
+- 调试接口：SWD (J-Link V9)
+- 编译器：ARM Compiler v5.05
+
+## 硬件架构规则
+
+### 必须遵守的硬件约束
+1. **调试接口：只使用SWD，禁用JTAG**
+   - 原因：避免二次烧录失败
+   - 可用：PA13(SWDIO), PA14(SWCLK)
+   - 禁用：PB3(JTDO), PB4(NJTRST) 不可作为普通GPIO
+
+2. **74HC595级联配置（3个芯片）**
+   - U1: D7数码管段控制(a-dp) + LED阴极
+   - U2: D7/D8位选择 + LED阳极（输出经PNP三极管反相，代码需要再次取反）
+   - U6: D8数码管段控制(a1-dp1)
+   - 数据流向：MOSI → U1 → U2 → U6
+
+3. **74HC165按键输入（9位）**
+   - SER + D0-D7 共9个按键输入
+   - 与74HC595共享SPI2总线和LATCH引脚
+   - 必须先读取按键，再更新显示，避免冲突
+
+4. **SPI2引脚分配（固定，不可更改）**
+   - PB13: SCLK (74HC595 SRCLK + 74HC165 SH/CLK)
+   - PB14: MISO (74HC165 QH)
+   - PB15: MOSI (74HC595 SER)
+   - PB7: LATCH (74HC595 RCLK + 74HC165 SH/LD)
+
+5. **数码管类型：共阳极**
+   - 段码需要取反（0=亮，1=灭）
+   - 位选择高电平有效
+   - U2输出需要再次取反（PNP三极管反相）
+
+### LED映射（固定不可更改）
+```
+LED_ALM  = 0  // D1 报警指示
+LED_V    = 1  // D2 电压指示
+LED_FR   = 2  // D3 F/R指示（高频模式）
+LED_Hz   = 3  // D4 频率单位
+LED_RUN  = 4  // D5 运行指示
+LED_A    = 5  // D6 电流单位
+```
+
+### 按键映射（74HC165, 固定不可更改）
+```
+KEY_RUN      // SER  运行键
+KEY_RESERVED // D0   保留
+KEY_ENTER    // D1   确认键
+KEY_FUNC     // D2   功能键
+KEY_STOP     // D3   停止键
+KEY_DOWN     // D4   递减键
+KEY_RPG      // D5   编程键
+KEY_SHIFT    // D6   位移键
+KEY_UP       // D7   递增键
+```
+
+## 编码规范
+
+### 显示相关代码规则
+1. **数码管段码表：必须对共阳极取反**
+   ```c
+   // 正确：共阳极数码管段码（已取反）
+   const uint8_t seg_code[] = {
+       0xC0, 0xF9, 0xA4, 0xB0, 0x99,  // 0-4
+       0x92, 0x82, 0xF8, 0x80, 0x90   // 5-9
+   };
+   ```
+
+2. **U2输出必须再次取反**
+   ```c
+   // 正确：U2数据在发送前取反（补偿PNP三极管）
+   u2_data = ~digit_select_data;
+   ```
+
+3. **频率显示格式（严格遵守）**
+   - 低频：XXX.XX Hz (小数点在第2位后，精度0.01Hz)
+   - 高频：XXXX.X Hz (小数点在第3位后，精度0.1Hz)
+   - 高频显示时必须四舍五入
+
+4. **小数点位置代码**
+   ```c
+   // 低频：小数点在第2位（个位）后
+   d7_buffer[2] = seg_code[digit] & ~0x80;
+   
+   // 高频：小数点在第3位（个位）后
+   d7_buffer[3] = seg_code[digit] & ~0x80;
+   ```
+
+### 按键处理规则
+1. **KEY_Scan()必须使用电平触发模式**
+   ```c
+   // 错误：边缘触发（长按失效）
+   if (key_state != key_last_state) {
+       // 消抖
+       // 检测按键 ← 只在变化时检测
+   }
+   return key_pressed;
+   
+   // 正确：电平触发（支持长按）
+   if (key_state != key_last_state) {
+       // 消抖（仅在变化时）
+   }
+   // 检测按键 ← 始终检测当前状态
+   return key_pressed;
+   ```
+
+2. **长按参数（已优化，不建议修改）**
+   - KEY_LONG_PRESS_THRESHOLD = 5 (250ms)
+   - KEY_REPEAT_RATE = 2 (100ms)
+   - 按键扫描周期 = 50ms
+
+3. **智能步进超时**
+   - STEP_TIMEOUT = 500ms
+   - 超时后必须重置为STEP_LEVEL_1
+
+### 时序控制规则
+1. **刷新周期（已优化）**
+   - 显示刷新：20ms (50Hz)
+   - 按键扫描：50ms (20Hz)
+   - 必须使用HAL_GetTick()做定时，不使用HAL_Delay()阻塞
+
+2. **SPI通信顺序**
+   ```c
+   // 正确顺序：先读取按键，再更新显示
+   1. KEY_Scan() - 读取74HC165
+   2. 处理按键逻辑
+   3. SPI_Display_Refresh() - 更新74HC595
+   ```
+
+## 已知错误及解决方案（必须遵守）
+
+### 错误1：二次烧录失败
+**症状：** Flash Download failed, JTAG chain error
+**原因：** 使用了JTAG相关GPIO或Flash算法错误
+**解决方案：**
+- Keil配置：Debug选项选择SWD（不选JTAG）
+- Flash算法：STM32F10x Med-density 64KB
+- 避免使用PB3/PB4作为普通GPIO
+- 禁用所有JTAG相关配置
+
+### 错误2：长按功能无效
+**症状：** 长按UP/DOWN键无连续触发
+**原因：** KEY_Scan()使用边缘触发，长按期间返回KEY_NONE
+**解决方案：**
+- 将按键检测逻辑移到状态变化判断之外
+- 始终返回当前按键状态，不仅在状态变化时
+
+### 错误3：高频小数点位置错误
+**症状：** 0.1Hz显示为00.001
+**原因：** 小数点放在百位后（第1位），应在个位后（第3位）
+**解决方案：**
+```c
+// 错误
+d7_buffer[1] = seg_code[digit] & ~0x80;  // 百位带小数点
+
+// 正确
+d7_buffer[3] = seg_code[digit] & ~0x80;  // 个位带小数点
+```
+
+### 错误4：D8小数点位置错误
+**症状：** 245.13显示为2451.3
+**原因：** 小数点位置参数错误
+**解决方案：**
+```c
+// 电流显示格式：XXX.XX A
+SEG_SetDigit_D8(2, digit, 1);  // 第2位（个位）带小数点
+```
+
+### 错误5：按键映射混乱
+**症状：** STOP键执行DOWN功能
+**原因：** 74HC165的9位输入映射错误
+**解决方案：**
+- 必须严格按照硬件连接定义映射
+- SER(bit0) → RUN, D0(bit1) → RESERVED, ..., D7(bit8) → UP
+
+### 错误6：智能步进每次按键就升级
+**症状：** 每按一次步进就升级到下一级别
+**原因：** 升级逻辑在每次按键时都执行
+**解决方案：**
+- UP键：频率超过阈值时才升级
+- DOWN键：频率为步进倍数时才升级
+- 超时后重置为级别1
+
+### 错误7：编译错误 case label重复
+**症状：** case label value has already appeared
+**原因：** switch-case中有重复的case值
+**解决方案：**
+- 检查KEY_SHIFT和KEY_RPG等枚举值是否重复
+- 确保74HC165的9位映射唯一
+
+### 错误8：key_long_press_count未定义
+**症状：** identifier "key_long_press_count" is undefined
+**原因：** 变量声明被意外删除
+**解决方案：**
+- 在main.c的Private variables区域添加：
+  ```c
+  uint8_t key_long_press_count = 0;
+  ```
+
+### 错误9：SPI_HandleTypeDef未定义
+**症状：** identifier "SPI_HandleTypeDef" is undefined
+**原因：** 缺少SPI头文件包含
+**解决方案：**
+- 在stm32f1xx_hal_msp.c和main.c中包含：
+  ```c
+  #include "stm32f1xx_hal_spi.h"
+  ```
+
+### 错误10：DOWN键步进逻辑错误
+**症状：** DOWN键步进不正确
+**原因：** 步进降级逻辑错误或自动判定步进级别
+**解决方案：**
+- 移除AutoSetStepLevel()函数
+- DOWN键超时后也重置为级别1
+- 按频率倍数判断升级（如0.10, 1.00, 10.00）
+
+### 错误11：长按重复触发时机不正确
+**症状：** 长按UP/DOWN键时，达到阈值后第一次重复触发有延迟
+**原因：** 重复触发的计算逻辑有off-by-one错误
+**解决方案：**
+```c
+// 错误：达到阈值(count=5)时，5 % 2 = 1，不会立即触发
+if (key_long_press_count % KEY_REPEAT_RATE == 0) {
+    should_execute = 1;
+}
+
+// 正确：从达到阈值开始计算重复间隔
+if ((key_long_press_count - KEY_LONG_PRESS_THRESHOLD) % KEY_REPEAT_RATE == 0) {
+    should_execute = 1;
+}
+```
+**说明：**
+- KEY_LONG_PRESS_THRESHOLD = 5 (250ms，5次扫描周期)
+- KEY_REPEAT_RATE = 2 (100ms，2次扫描周期)
+- 修复后：达到阈值(count=5)时立即触发第一次重复，然后每100ms重复一次
+- 时间线：0ms首次触发 → 250ms第一次重复 → 350ms第二次重复 → 450ms第三次重复...
+
+## 智能步进规则（核心算法，不可随意修改）
+
+### 低频模式 (0.00-400.00Hz)
+```
+级别1: 0.00 ~ 0.09Hz  → 步进 0.01Hz  (freq <= 9)
+级别2: 0.10 ~ 0.90Hz  → 步进 0.1Hz   (freq <= 90)
+级别3: 1.00 ~ 9.90Hz  → 步进 1Hz     (freq <= 990)
+级别4: 10.00 ~ 400.00Hz → 步进 10Hz  (freq <= 40000)
+```
+
+### 高频模式 (0.0-4000.0Hz)
+```
+级别1: 0.0 ~ 0.9Hz    → 步进 0.1Hz   (freq <= 90)
+级别2: 1.0 ~ 9.9Hz    → 步进 1Hz     (freq <= 990)
+级别3: 10.0 ~ 99.9Hz  → 步进 10Hz    (freq <= 9990)
+级别4: 100.0 ~ 4000.0Hz → 步进 100Hz (freq <= 400000)
+```
+
+### 升级规则
+- UP键：CheckStepLevelUpgrade() - 频率超过当前级别上限时升级
+- DOWN键：CheckStepLevelUpgradeForDown() - 频率为步进倍数时升级
+- 超时：500ms无操作后重置为级别1
+
+## 代码审查检查清单
+
+### 修改代码前必须检查
+- [ ] 是否使用了JTAG相关GPIO？
+- [ ] 数码管段码是否取反？
+- [ ] U2输出是否再次取反？
+- [ ] 小数点位置是否正确？
+- [ ] 按键映射是否正确？
+- [ ] KEY_Scan()是否电平触发？
+- [ ] 是否使用HAL_Delay()阻塞主循环？
+- [ ] 智能步进逻辑是否正确？
+
+### 编译前必须检查
+- [ ] 无未定义的标识符
+- [ ] 无重复的case标签
+- [ ] 所有必要的头文件已包含
+- [ ] Flash算法配置正确（64KB）
+
+### 烧录前必须检查
+- [ ] Debug接口选择SWD
+- [ ] J-Link设备识别正常
+- [ ] 目标芯片选择STM32F103C8
+
+## 新功能开发指导
+
+### 添加新按键功能
+1. 在key.h中定义新的KEY_XXX枚举
+2. 在key.c的KEY_Scan()中添加映射
+3. 在main.c的switch-case中添加处理逻辑
+4. 确定是否需要长按支持（修改should_execute逻辑）
+
+### 添加新的显示内容
+1. 在segment_display.h中声明函数
+2. 在segment_display.c中实现显示逻辑
+3. 注意小数点位置和格式
+4. 更新d7_buffer或d8_buffer
+5. 调用UpdateDisplay()刷新
+
+### 添加菜单功能
+1. 在menu_system.h中定义菜单结构
+2. 在menu_system.c中实现菜单逻辑
+3. 在main.c中调用MENU_ProcessKey()
+4. 根据菜单状态切换显示内容
+
+## 性能优化建议
+- 避免在主循环中使用HAL_Delay()
+- 使用定时器做周期性任务
+- SPI通信尽量批量发送
+- 减少不必要的全局变量
+
+## 调试技巧
+1. 使用Keil调试器查看变量值
+2. 用示波器检查SPI波形
+3. 单独测试显示和按键功能
+4. 逐步调试智能步进逻辑
+5. 检查定时器周期是否准确
+
+## 禁止操作
+❌ 修改74HC595/74HC165的引脚定义
+❌ 修改LED和按键映射
+❌ 使用JTAG调试接口
+❌ 在主循环中使用长延迟
+❌ 修改已验证的段码表
+❌ 随意修改智能步进阈值
+❌ 删除PNP三极管反相补偿
+❌ 修改显示格式规范
+
+## 版本管理
+- 每次重大修改后创建历史版本
+- 版本命名：500_double_led_vX.Y
+- 必须包含：源代码 + 版本说明 + README
+- 记录所有bug修复到.cursorrules
+
+## 项目交接清单
+新开发者接手时必须：
+1. 阅读README.txt了解项目概况
+2. 阅读版本说明_vX.Y.txt了解功能
+3. 阅读本.cursorrules文件了解规则
+4. 检查硬件连接是否与代码一致
+5. 使用SWD接口测试烧录
+6. 运行基础功能测试
+
+## 联系与支持
+- 开发工具：Cursor AI + STM32CubeMX
+- HAL库文档：查阅STM32CubeF1官方文档
+- 硬件手册：74HC595/74HC165数据手册
+- 调试工具：J-Link V9 + SWD
+
+---
+最后更新：2025-10-25
+版本：v1.0
+状态：已验证，可用于生产
+
