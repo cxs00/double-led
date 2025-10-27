@@ -1,0 +1,438 @@
+# STM32 LED Display Project - Cursor AI Rules
+
+## ⭐ MOST IMPORTANT: Project Continuity
+**BEFORE doing ANYTHING, read `SESSION_STATE.md` to understand:**
+- Current project state and completion status
+- Last operations and who did them
+- Known issues and solutions
+- Next recommended steps
+- Current configurations
+
+This ensures seamless continuation when different developers/AI work on the project.
+
+## Project Overview
+This is an STM32F103C8T6 embedded project for LED display control using HAL library.
+
+## 🚨 Critical STM32 Development Rules
+
+### SWD Debug Interface (MUST FOLLOW!)
+
+**STRICT REQUIREMENT:**
+- Development phase MUST NOT disable SWD debug interface
+- NEVER use `__HAL_AFIO_REMAP_SWJ_DISABLE()` in development
+
+**Allowed configurations:**
+```c
+// ✅ RECOMMENDED (Development)
+__HAL_AFIO_REMAP_SWJ_NOJTAG();  // Keep SWD, disable JTAG
+
+// ✅ ALLOWED (If JTAG needed)
+__HAL_AFIO_REMAP_SWJ_ENABLE();
+
+// ❌ FORBIDDEN (Development phase)
+__HAL_AFIO_REMAP_SWJ_DISABLE();  // Will cause re-flash failure!
+```
+
+**Code review checkpoint:**
+After every code generation, CHECK `stm32xxx_hal_msp.c` → `HAL_MspInit()` function.
+
+**Pin usage planning:**
+- PA13 (SWDIO) - Reserved for debug, DO NOT use for other functions
+- PA14 (SWCLK) - Reserved for debug, DO NOT use for other functions
+- PA15, PB3, PB4 - Available if using SWJ_NOJTAG
+
+**Reference documentation:**
+See `故障经验/` folder for detailed troubleshooting guides.
+
+## Core Principles
+1. **Follow existing code style strictly**
+2. **Maintain modular architecture**
+3. **Preserve hardware abstraction**
+4. **Keep functions focused and small**
+5. **Write complete documentation**
+
+## Naming Conventions
+
+### Functions
+- Format: `MODULE_ActionObject()`
+- Examples: `HC595_SendByte()`, `SEG_SetNumber()`, `KEY_Scan()`
+- ALWAYS use module prefix
+- Use PascalCase after prefix
+
+### Variables
+- Use `lower_case_with_underscore`
+- Global: descriptive names
+- Local: short but clear
+- Example: `display_counter`, `key_value`, `refresh_timer`
+
+### Macros and Constants
+- Format: `MODULE_NAME_VALUE`
+- ALL UPPERCASE with underscores
+- Examples: `HC595_DS_PORT`, `KEY_NUM`, `SEG_DIGIT_NUM`
+
+### Files
+- Format: `module_name.c` and `module_name.h`
+- All lowercase with underscores
+- Examples: `hc595.c`, `segment_display.c`, `key.c`
+
+## Code Style Rules
+
+### Indentation
+- **ALWAYS use 4 spaces** (never tabs)
+- Consistent across all files
+
+### Braces
+```c
+// Opening brace on new line for functions and control structures
+void function_name(void)
+{
+    if (condition)
+    {
+        statement;
+    }
+    else
+    {
+        other_statement;
+    }
+}
+```
+
+### Spacing
+- Space around binary operators: `a + b`, `x = y`
+- Space after comma: `func(a, b, c)`
+- Space after keywords: `if (`, `for (`, `while (`
+- No space before semicolon
+
+### Comments
+```c
+/**
+  * @brief  Function brief description
+  * @param  param1: Parameter 1 description
+  * @param  param2: Parameter 2 description
+  * @retval Return value description
+  */
+void Module_Function(uint8_t param1, uint8_t param2)
+{
+    /* Single line comment for code explanation */
+    
+    /* Multi-line comment for complex logic:
+     * Line 1 explanation
+     * Line 2 explanation
+     */
+}
+```
+
+## File Structure
+
+### Header File Template
+```c
+#ifndef __MODULE_NAME_H
+#define __MODULE_NAME_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "main.h"
+
+/* Pin definitions */
+#define MODULE_PIN_PORT    GPIOx
+#define MODULE_PIN_NUM     GPIO_PIN_x
+
+/* Constants */
+#define MODULE_CONSTANT    value
+
+/* Function prototypes */
+void MODULE_Init(void);
+void MODULE_Function(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __MODULE_NAME_H */
+```
+
+### Source File Template
+```c
+#include "module_name.h"
+
+/* Private variables */
+static uint8_t private_variable;
+
+/* Private function prototypes */
+static void Private_Function(void);
+
+/**
+  * @brief  Public function implementation
+  */
+void MODULE_Function(void)
+{
+    // Implementation
+}
+
+/**
+  * @brief  Private function implementation
+  */
+static void Private_Function(void)
+{
+    // Implementation
+}
+```
+
+## When Writing New Code
+
+### DO:
+- ✅ Follow existing patterns in similar files
+- ✅ Add complete Doxygen-style comments
+- ✅ Check HAL function return values
+- ✅ Validate all parameters
+- ✅ Use consistent spacing and indentation
+- ✅ Keep functions under 50 lines when possible
+- ✅ Use meaningful variable names
+- ✅ Add header guards to all .h files
+- ✅ Group related code logically
+- ✅ Initialize all variables
+
+### DON'T:
+- ❌ Change existing naming style
+- ❌ Use tabs for indentation
+- ❌ Mix different brace styles
+- ❌ Leave functions without comments
+- ❌ Ignore error codes
+- ❌ Use magic numbers (use named constants)
+- ❌ Create global variables without good reason
+- ❌ Write functions over 100 lines
+- ❌ Use single-letter variable names (except i, j for loops)
+- ❌ Skip parameter validation
+
+## Module Development
+
+### Creating New Driver Module
+1. Create `module_name.h` and `module_name.c`
+2. Add to Keil project in `Application/User/Core` group
+3. Include in main.c if needed
+4. Follow naming: `MODULE_Function()` format
+5. Add initialization function: `MODULE_Init()`
+6. Add complete documentation
+
+### Module Independence
+- Each module should be self-contained
+- Minimal dependencies between modules
+- Clear, well-defined interfaces
+- Hardware abstraction in separate layer
+
+## Hardware Abstraction
+
+### Pin Definitions
+```c
+// In header file
+#define HC595_DS_PORT       GPIOA
+#define HC595_DS_PIN        GPIO_PIN_0
+
+// Use macros for operations
+#define HC595_DS_HIGH()     HAL_GPIO_WritePin(HC595_DS_PORT, HC595_DS_PIN, GPIO_PIN_SET)
+#define HC595_DS_LOW()      HAL_GPIO_WritePin(HC595_DS_PORT, HC595_DS_PIN, GPIO_PIN_RESET)
+```
+
+### Portability
+- Keep hardware-specific code in dedicated sections
+- Use macros for pin operations
+- Document hardware dependencies clearly
+
+## Error Handling
+
+### Always Check Returns
+```c
+// Good
+if (HAL_I2C_Mem_Write(&hi2c1, addr, reg, size, data, len, timeout) != HAL_OK)
+{
+    return ERROR_CODE;
+}
+
+// Bad
+HAL_I2C_Mem_Write(&hi2c1, addr, reg, size, data, len, timeout);
+```
+
+### Parameter Validation
+```c
+uint8_t MODULE_Function(uint8_t param)
+{
+    // Validate parameters
+    if (param >= MAX_VALUE)
+        return ERROR;
+    
+    // Continue with function
+}
+```
+
+## Documentation Requirements
+
+### Code Documentation
+- Every public function MUST have Doxygen comment
+- Explain WHY, not just WHAT
+- Document limitations and constraints
+- Add usage examples for complex functions
+
+### File Documentation
+- Update README_USAGE.md for new features
+- Add to HARDWARE_CONFIG.h if hardware changes
+- Update TEST_VERIFY.md with test procedures
+- Keep CONTRIBUTING.md current
+
+## Testing
+
+### Before Committing
+- ✅ Code compiles without errors
+- ✅ Code compiles without warnings
+- ✅ Tested on hardware (if available)
+- ✅ No linter errors
+- ✅ Documentation updated
+- ✅ Comments are complete
+
+## Common Patterns
+
+### Initialization Function
+```c
+void MODULE_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    
+    /* Enable clock */
+    __HAL_RCC_GPIOx_CLK_ENABLE();
+    
+    /* Configure GPIO */
+    GPIO_InitStruct.Pin = MODULE_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(MODULE_PORT, &GPIO_InitStruct);
+}
+```
+
+### Data Processing
+```c
+void MODULE_ProcessData(uint8_t *data, uint16_t len)
+{
+    uint16_t i;
+    
+    /* Validate parameters */
+    if (data == NULL || len == 0)
+        return;
+    
+    /* Process data */
+    for (i = 0; i < len; i++)
+    {
+        // Process each byte
+    }
+}
+```
+
+## Project-Specific Rules
+
+### Display Refresh
+- Maintain 2ms refresh rate per digit
+- Use dynamic scanning
+- Check refresh_timer before updating
+
+### Button Handling
+- Always debounce (minimum 3 samples)
+- Use state machine pattern
+- Handle both short and long press
+
+### EEPROM Operations
+- Always wait 5ms after write
+- Validate addresses before access
+- Check I2C return values
+
+### Memory Management
+- Prefer stack allocation
+- Use static for persistent data
+- Avoid dynamic allocation (malloc/free)
+
+## AI Assistant Behavior
+
+### When Asked to Add Feature
+1. Analyze existing similar code
+2. Follow exact same style and structure
+3. Create separate module files if substantial
+4. Add complete documentation
+5. Update relevant documentation files
+6. Provide testing instructions
+
+### When Asked to Fix Bug
+1. Understand the root cause first
+2. Make minimal necessary changes
+3. Explain the fix clearly
+4. Check for similar issues elsewhere
+5. Add comments explaining the fix
+6. Update bug tracking documentation
+
+### When Asked to Optimize
+1. Measure current performance
+2. Identify bottlenecks
+3. Propose solution with tradeoffs
+4. Keep interfaces unchanged
+5. Document optimization reasoning
+6. Provide before/after comparison
+
+### When Asked to Refactor
+1. Preserve functionality exactly
+2. Improve code structure gradually
+3. Keep git history clean
+4. Update all affected documentation
+5. Ensure backward compatibility
+
+## Response Format
+
+### When Providing Code
+1. Show file path clearly
+2. Indicate if creating new file or editing existing
+3. Provide context around changes
+4. Explain reasoning briefly
+5. Mention any side effects
+
+### When Explaining
+1. Start with high-level overview
+2. Reference specific files and functions
+3. Use code examples
+4. Explain tradeoffs
+5. Suggest alternatives when applicable
+
+## Project File References
+
+**Always consider these files when making changes:**
+- `CONTRIBUTING.md` - Development guidelines
+- `HARDWARE_CONFIG.h` - Hardware configuration
+- `README_USAGE.md` - User documentation  
+- `TEST_VERIFY.md` - Testing procedures
+- `PROJECT_SUMMARY.md` - Project overview
+- `故障经验/` - Troubleshooting and best practices
+
+## Hardware Context
+
+**Target MCU:** STM32F103C8T6
+- Flash: 64KB
+- RAM: 20KB  
+- Clock: 8MHz HSI (can be 72MHz with PLL)
+- Architecture: ARM Cortex-M3
+
+**Peripherals Used:**
+- GPIO (multiple pins)
+- I2C1 (PB8/PB9) - Currently disabled
+- ADC1 (PA1)
+- TIM4 (PB6)
+
+**External Hardware:**
+- 74HC595 shift registers (3x)
+- 8-digit 7-segment display
+- 8 push buttons
+- 24C16 EEPROM (I2C) - Currently disabled
+
+## Final Reminder
+
+**The golden rule: When in doubt, follow existing code patterns exactly.**
+
+Look at `hc595.c`, `segment_display.c`, `key.c`, and `eeprom.c` as reference examples for code style, structure, and documentation.
+
+**For SWD/debug interface issues, ALWAYS refer to `故障经验/` folder.**
