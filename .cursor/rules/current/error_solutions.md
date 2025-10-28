@@ -1049,7 +1049,250 @@ AI鍗忎綔鎸囧崡.md     → AI协作指南.md
 
 ---
 
-**最后更新：** 2025-10-25  
-**错误总数：** 13个  
+## 🟡 中等错误（续）
+
+### 错误15：Git提交信息中文乱码问题 {#err-15}
+
+**错误ID**：ERR-15  
+**添加时间**：2025-10-28  
+**影响级别**：🟡 中等
+
+#### 症状
+```bash
+git log --oneline
+# 显示：娣诲姞GitHub鎺ㄩ€佸伐鍏峰拰璁よ瘉璇存槑鏂囨。
+# 应该：添加GitHub推送工具和认证说明文档
+```
+
+或文件名显示为八进制转义序列：
+```bash
+git status
+# 显示：GitHub_Desktop\344\275\277\347\224\250\346\214\207\345\215\227.md
+# 应该：GitHub_Desktop使用指南.md
+```
+
+#### 原因
+
+1. **PowerShell默认编码**：Windows PowerShell使用GBK编码（代码页936）
+2. **Git期望UTF-8**：Git期望commit信息使用UTF-8编码
+3. **编码不匹配**：中文字符被GBK编码后，Git误认为是UTF-8，导致乱码
+4. **Git未配置编码**：Git没有明确配置使用UTF-8编码
+
+#### 解决方案
+
+##### 方案1：永久配置Git编码（必须执行）
+
+```powershell
+# 配置Git使用UTF-8编码
+git config --global core.quotepath false        # 不转义非ASCII字符
+git config --global i18n.commitencoding utf-8   # commit信息使用UTF-8
+git config --global i18n.logoutputencoding utf-8 # log输出使用UTF-8
+git config --global gui.encoding utf-8           # GUI界面使用UTF-8
+```
+
+**验证配置：**
+```powershell
+git config --global -l | Select-String "i18n|core.quotepath|gui.encoding"
+```
+
+##### 方案2：配置PowerShell编码（每次会话）
+
+```powershell
+# 设置PowerShell编码为UTF-8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+```
+
+##### 方案3：永久配置PowerShell（推荐）
+
+**步骤1：检查配置文件**
+```powershell
+# 检查配置文件位置
+echo $PROFILE
+
+# 测试是否存在
+Test-Path $PROFILE
+```
+
+**步骤2：创建配置文件（如果不存在）**
+```powershell
+New-Item -Path $PROFILE -Type File -Force
+```
+
+**步骤3：编辑配置文件**
+```powershell
+notepad $PROFILE
+```
+
+**步骤4：添加以下内容**
+```powershell
+# 设置PowerShell编码为UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001 > $null
+```
+
+**步骤5：重新加载配置**
+```powershell
+. $PROFILE
+```
+
+##### 方案4：使用自动配置脚本
+
+**运行项目中的编码修复脚本：**
+```powershell
+cd "D:\stm32\BilibiliProject\500 double led"
+.\fix_encoding.ps1
+```
+
+此脚本会自动配置所有必要的编码设置。
+
+##### 方案5：已存在的乱码commit处理
+
+**注意：** 已提交的乱码commit信息无法简单修复
+
+**推荐做法：**
+- ✅ **保持不变**：不修改Git历史，保持完整性
+- ✅ **GitHub正常显示**：GitHub网页端通常能自动检测编码并正确显示
+
+**不推荐做法：**
+- ❌ **修改历史**：使用`git rebase`修改commit（需要force push）
+- ❌ **风险**：会改变commit哈希，影响协作
+
+**验证：**
+访问GitHub仓库的commits页面，确认中文是否正确显示：
+```
+https://github.com/cxs00/double-led/commits/master
+```
+
+#### 标准Git操作流程
+
+```powershell
+# 1. 初始化配置（第一次）
+git config --global core.quotepath false
+git config --global i18n.commitencoding utf-8
+git config --global i18n.logoutputencoding utf-8
+git config --global gui.encoding utf-8
+
+# 2. 设置PowerShell编码（每次会话，或配置到$PROFILE）
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# 3. 正常使用Git
+git add .
+git commit -m "添加新功能"  # 中文将正确编码
+git push origin master
+```
+
+#### 验证配置
+
+```powershell
+# 1. 检查Git配置
+git config --global -l | Select-String "i18n|core.quotepath|gui.encoding"
+
+# 2. 检查PowerShell编码
+Write-Host "OutputEncoding: $([Console]::OutputEncoding.EncodingName)"
+Write-Host "InputEncoding: $([Console]::InputEncoding.EncodingName)"
+Write-Host "PipeEncoding: $($OutputEncoding.EncodingName)"
+
+# 3. 测试中文显示
+echo "测试中文：你好世界"
+git log --oneline -1
+```
+
+#### 预防措施
+
+1. **初次使用Git时**：运行`fix_encoding.ps1`配置所有编码
+2. **每次打开PowerShell**：确保编码设置正确（或配置到$PROFILE）
+3. **重要commit**：优先使用英文消息，或确保编码正确
+4. **团队协作**：分享编码配置给所有成员
+
+#### 技术细节
+
+**编码转换过程：**
+
+**正常流程（UTF-8）：**
+```
+中文输入 → UTF-8编码 → Git存储(UTF-8) → 显示(UTF-8) → ✅ 正确显示
+```
+
+**错误流程（GBK）：**
+```
+中文输入 → GBK编码 → Git存储(当作UTF-8) → 显示(UTF-8) → ❌ 乱码
+```
+
+**PowerShell编码层级：**
+1. **输入编码**：`[Console]::InputEncoding` - 处理键盘输入
+2. **输出编码**：`[Console]::OutputEncoding` - 显示到控制台
+3. **管道编码**：`$OutputEncoding` - 进程间通信
+
+**必须全部设置为UTF-8！**
+
+#### 常见问题
+
+**Q1: 为什么配置后还是乱码？**
+- A: 需要同时配置Git和PowerShell编码，缺一不可
+- 检查：`git config --global -l | Select-String encoding`
+- 检查：`[Console]::OutputEncoding`
+
+**Q2: 已有的乱码commit能修复吗？**
+- A: 不建议修改，GitHub网页端通常能正确显示
+- 如果必须修改，使用`git rebase -i`，但需要force push
+
+**Q3: 每次都要设置PowerShell编码吗？**
+- A: 配置到$PROFILE后，每次启动PowerShell自动加载
+
+**Q4: GitHub Desktop有这个问题吗？**
+- A: 没有，GitHub Desktop自动处理编码，推荐使用
+
+**Q5: 批处理脚本(.bat)需要配置吗？**
+- A: 需要在脚本开头添加`chcp 65001`
+
+#### 相关文档
+
+- 📄 `中文编码问题解决方案.md` - 完整的编码问题说明
+- 📄 `fix_encoding.ps1` - 自动配置脚本
+- 📄 `.cursorrules` - 错误15详细说明
+
+#### 影响范围
+
+- ✅ Git commit信息
+- ✅ Git log显示
+- ✅ 文件名显示
+- ✅ 分支名称
+- ✅ Tag名称
+
+#### 最佳实践
+
+1. **初始化项目时**：
+   ```powershell
+   .\fix_encoding.ps1
+   ```
+
+2. **日常开发时**：
+   - 使用GitHub Desktop（自动处理编码）
+   - 或确保PowerShell已配置UTF-8
+
+3. **重要提交时**：
+   - 使用英文commit消息
+   - 或在正确配置后使用中文
+
+4. **团队协作时**：
+   - 分享`fix_encoding.ps1`给团队成员
+   - 统一编码配置标准
+
+**说明：**
+- **问题根源**：PowerShell GBK编码 + Git未配置UTF-8
+- **彻底解决**：Git全局配置UTF-8 + PowerShell配置文件
+- **预防**：使用`fix_encoding.ps1`脚本一键配置
+- **验证**：检查配置项 + 测试中文commit
+- **最佳实践**：优先使用GitHub Desktop（自动处理编码）
+
+---
+
+**最后更新：** 2025-10-28  
+**错误总数：** 15个  
 **状态：** ✅ 所有错误已记录并提供解决方案
 
